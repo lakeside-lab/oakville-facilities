@@ -73,25 +73,11 @@
 
   </div>
   <div id="map"></div>
-  <p class="mapview"><label><input type="checkbox" id="mapViewOnly" checked> Only show places in the current map view</label> — zoom or move the map and the list below updates. Uncheck to see all matching places. Tap a pin on the map to see which place it is — a popup shows its name, address and category, and its card is highlighted below.</p>
+  <p class="mapview"><label><input type="checkbox" id="mapViewOnly" checked> Only show places in the current map view</label> — zoom or move the map and the list below updates. Uncheck to see all matching places. Tap a pin, or a place in the list, to see which place it is — a popup shows its name, address and category, and its card expands below with its activity-filtered reviews, where available. Clicking does not move the map.</p>
   <p id="count"></p>
   <div id="list"></div>
-  <section id="reviewsSection" style="margin-top: 28px;">
-    <h2>Filtered reviews — major centres</h2>
-    <p style="color: #555; line-height: 1.5;">Google Maps reviews are for the whole centre, not for one court or rink inside it. These quotes are filtered to the activity mentioned, so a library review does not appear under tennis, and a pool review does not appear under ice. Overall centre star ratings are not activity ratings — see the individual review stars, where given. Reviews for most small park points do not exist, so this panel covers major centres only.</p>
-    <div class="chips" id="reviewChips">
-      <button class="chip active" data-activity="">All reviews <span>18</span></button>
-      <button class="chip" data-activity="Ice &amp; Arena">Ice &amp; Arena</button>
-      <button class="chip" data-activity="Pool">Pool</button>
-      <button class="chip" data-activity="Tennis / Pickleball">Tennis / Pickleball</button>
-      <button class="chip" data-activity="Playground">Playground</button>
-      <button class="chip" data-activity="Library">Library</button>
-      <button class="chip" data-activity="General">General</button>
-    </div>
-    <p id="reviewCount" style="color: #555;"></p>
-    <div id="reviewList" style="display: grid; gap: 10px;"></div>
-  </section>
   <footer>
+    <p>Reviews: click a place in the list (or a pin on the map) to see its activity-filtered reviews, right inside that place's card — they are not listed all together on the page. Google Maps reviews are for the whole centre/park, filtered to the activity mentioned, so a library review does not appear under tennis, and a pool review does not appear under ice.</p>
     Sources: <a href="https://portal-exploreoakville.opendata.arcgis.com/datasets/ExploreOakville::town-facilities">Town Facilities open data</a> and
     <a href="https://portal-exploreoakville.opendata.arcgis.com/datasets/ExploreOakville::parks">Parks open data</a> (Town of Oakville).
     Tennis and pickleball share one category because the Town paints pickleball lines on multi-lined courts rather than publishing separate pickleball locations.
@@ -153,6 +139,39 @@ function filtered() {
   return items;
 }
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function reviewsFor(f) {
+  const centres = [
+    { key: "Glen Abbey", centre: "Glen Abbey Community Centre" },
+    { key: "Sixteen Mile Sports Complex", centre: "Sixteen Mile Sports Complex" },
+    { key: "Trafalgar Park", centre: "Trafalgar Park" },
+    { key: "Queen Elizabeth Park", centre: "Queen Elizabeth Park Community and Cultural Centre" },
+    { key: "Oakville Trafalgar Community Centre", centre: "Oakville Trafalgar Community Centre" },
+    { key: "River Oaks Park", centre: "River Oaks Park" }
+  ];
+  const match = centres.find(c => f.name.includes(c.key));
+  if (!match) return [];
+  if (!/Community Centre|Sports Complex|Park|Arena|Pool|Tennis|Playground|Library/.test(f.name)) return [];
+  let activity = null;
+  if (f.name.includes("Library")) activity = "Library";
+  else if (f.category === "Ice Rinks & Arenas") activity = "Ice & Arena";
+  else if (f.category === "Tennis / Pickleball") activity = "Tennis / Pickleball";
+  else if (f.category === "Pools & Splash Pads") activity = "Pool";
+  else if (f.category === "Playgrounds") activity = "Playground";
+  else if (f.category === "Community & Culture" || f.category === "Parks") activity = null;
+  else return [];
+  return REVIEWS.filter(r => r.centre === match.centre && (!activity || r.activity === activity));
+}
+function reviewsHtml(f) {
+  if (f.id !== selectedId) return "";
+  const rs = reviewsFor(f);
+  if (!rs.length) return '<div style="margin-top:10px; border-top:1px solid #eee; padding-top:8px;"><p style="color:#555; font-size:14px;">No reviews found that mention this activity for this place.</p></div>';
+  let out = '<div style="margin-top:10px; border-top:1px solid #eee; padding-top:8px;"><h4 style="margin:0 0 6px;">Reviews for this place</h4>';
+  rs.forEach(r => {
+    out += '<p style="font-size:14px; line-height:1.45;"><span class="tag" style="background:#333;">' + esc(r.activity) + '</span><br><em>"' + esc(r.quote) + '"</em><br>' + (r.stars ? '★'.repeat(r.stars) + '☆'.repeat(5 - r.stars) + ' · ' : '') + esc(r.author) + ' · <a href="' + esc(r.sourceUrl) + '" target="_blank" rel="noopener">' + esc(r.source) + '</a></p>';
+  });
+  out += '<p style="color:#555; font-size:13px;">Reviews are for the whole centre/park, filtered to this activity.</p></div>';
+  return out;
+}
 function render() {
   const items = filtered();
   markers.forEach(m => map.removeLayer(m));
@@ -160,11 +179,12 @@ function render() {
   items.forEach(f => {
     const color = COLORS[f.category] || "#333";
     const m = L.circleMarker([f.lat, f.lng], { radius: 6, color, weight: 2, fillColor: color, fillOpacity: 0.85 });
-    m.bindPopup(`<strong>${esc(f.name)}</strong><br>${esc(f.address || "Address not published")}<br>${esc(f.category)}`);
-    // Do not call select() here: select() rebuilds all markers, which would
-    // close this popup immediately. Highlight the list card only, and let
-    // Leaflet open the popup (it shows the place name, address and category).
-    m.on("click", () => { selectedId = f.id; highlightCard(f.id); });
+    m._fid = f.id;
+    // autoPan: false stops Leaflet shifting the map up/down to fit the popup.
+    m.bindPopup(`<strong>${esc(f.name)}</strong><br>${esc(f.address || "Address not published")}<br>${esc(f.category)}`, { autoPan: false });
+    // select() now rebuilds markers then re-opens this pin's popup in place
+    // (autoPan: false), so the popup stays open and the card shows reviews.
+    m.on("click", () => select(f.id, false));
     m.addTo(map);
     markers.push(m);
   });
@@ -180,6 +200,7 @@ function render() {
         <a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lng}" target="_blank" rel="noopener">Directions</a>
         <a href="${esc(f.sourceUrl)}" target="_blank" rel="noopener">Open-data record</a>
       </p>
+      ${f.id === selectedId ? reviewsHtml(f) : ""}
     </article>`).join("") || "<p>No places in the current map view match. Try zooming out, moving the map, unchecking 'Only show places in the current map view', or clearing the search/filter.</p>";
   if (items.length > 200) {
     listEl.insertAdjacentHTML("beforeend", `<p style="color:#555">Showing the first 200 list entries — all ${items.length.toLocaleString()} matches are on the map. Narrow the search to see more in the list.</p>`);
@@ -187,23 +208,25 @@ function render() {
   listEl.querySelectorAll(".card").forEach(el => {
     el.addEventListener("click", e => {
       if (e.target.tagName === "A") return;
-      select(Number(el.dataset.id), true);
+      select(Number(el.dataset.id), false);
     });
   });
 }
 function select(id, pan) {
+  // Deliberately no map movement and no page scroll on a list click:
+  // no setView, no scrollIntoView, and popups use autoPan: false.
+  // Just highlight the card and, if its pin is already on screen, open its popup.
   selectedId = id;
   const f = DATA.find(x => x.id === id);
   if (!f) return;
-  if (pan) map.setView([f.lat, f.lng], 15);
   render();
-  const el = listEl.querySelector(`[data-id="${id}"]`);
-  if (el && pan) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  const m = markers.find(mm => mm._fid === id);
+  if (m) m.openPopup();
 }
 function highlightCard(id) {
+  // Pin click: highlight only. No page scroll, no map move; Leaflet opens
+  // the popup in place (autoPan: false).
   document.querySelectorAll(".card").forEach(el => el.classList.toggle("selected", Number(el.dataset.id) === id));
-  const el = listEl.querySelector(`[data-id="${id}"]`);
-  if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 document.getElementById("search").addEventListener("input", e => { query = e.target.value; render(); });
 document.getElementById("chips").addEventListener("click", e => {
@@ -243,27 +266,6 @@ document.getElementById("useLocation").addEventListener("click", () => {
   );
 });
 document.getElementById("clearLocation").addEventListener("click", clearOrigin);
-let reviewActivity = "";
-function renderReviews() {
-  const items = REVIEWS.filter(r => !reviewActivity || r.activity === reviewActivity);
-  document.getElementById("reviewCount").textContent = `Showing ${items.length} of ${REVIEWS.length} filtered reviews`;
-  document.getElementById("reviewList").innerHTML = items.map(r => `
-    <article class="card" style="cursor: default;">
-      <span class="tag" style="background: #333;">${esc(r.activity)}</span>
-      <h3>${esc(r.centre)}</h3>
-      <p style="font-style: italic; color: #222; font-size: 15px;">"${esc(r.quote)}"</p>
-      <p>${r.stars ? "★".repeat(r.stars) + "☆".repeat(5 - r.stars) + " · " : ""}${esc(r.author)} · <a href="${esc(r.sourceUrl)}" target="_blank" rel="noopener">${esc(r.source)}</a></p>
-    </article>`).join("") || "<p>No reviews in this activity filter. Try another activity.</p>";
-}
-document.getElementById("reviewChips").addEventListener("click", e => {
-  const btn = e.target.closest(".chip");
-  if (!btn) return;
-  document.querySelectorAll("#reviewChips .chip").forEach(b => b.classList.remove("active"));
-  btn.classList.add("active");
-  reviewActivity = btn.dataset.activity;
-  renderReviews();
-});
-renderReviews();
 document.getElementById("mapViewOnly").addEventListener("change", e => { mapViewOnly = e.target.checked; render(); });
 map.on("moveend", () => { if (mapViewOnly) render(); });
 render();
