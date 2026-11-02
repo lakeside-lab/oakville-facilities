@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Oakville Facilities</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 2C20 2 10 12 10 24c0 16 22 38 22 38s22-22 22-38C54 12 44 2 32 2z' fill='%230b7a5e'/%3E%3Ccircle cx='32' cy='24' r='10' fill='white'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -27,6 +28,8 @@
   .chip.active { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
   .chip.active span { color: #ccc; }
   #map { height: 440px; border-radius: 12px; border: 1px solid #ddd; background: #e8ecef; z-index: 0; }
+  .mapview { margin: 10px 0 0; font-size: 14px; color: #333; }
+  .mapview input { margin-right: 6px; }
   #count { margin: 14px 0 8px; color: #555; }
   #list { display: grid; gap: 10px; }
   .card { background: #fff; border: 1px solid #e2e5e8; border-radius: 12px; padding: 14px 16px; cursor: pointer; }
@@ -70,6 +73,7 @@
 
   </div>
   <div id="map"></div>
+  <p class="mapview"><label><input type="checkbox" id="mapViewOnly" checked> Only show places in the current map view</label> — zoom or move the map and the list below updates. Uncheck to see all matching places.</p>
   <p id="count"></p>
   <div id="list"></div>
   <footer>
@@ -112,15 +116,20 @@ const map = L.map("map").setView([43.45, -79.68], 12);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
 let markers = [];
 let selectedId = null;
+let mapViewOnly = true;
 const listEl = document.getElementById("list");
 const countEl = document.getElementById("count");
 
 function filtered() {
   const q = query.trim().toLowerCase();
-  const items = DATA.filter(f =>
+  let items = DATA.filter(f =>
     (!activeCat || f.category === activeCat) &&
     (!q || f.name.toLowerCase().includes(q) || (f.address || "").toLowerCase().includes(q))
   );
+  if (mapViewOnly && typeof map !== "undefined") {
+    const b = map.getBounds();
+    items = items.filter(f => f.lat >= b.getSouth() && f.lat <= b.getNorth() && f.lng >= b.getWest() && f.lng <= b.getEast());
+  }
   if (origin) {
     items.forEach(f => { f._dist = haversineKm(origin.lat, origin.lng, f.lat, f.lng); });
     items.sort((a, b) => a._dist - b._dist);
@@ -140,7 +149,7 @@ function render() {
     m.addTo(map);
     markers.push(m);
   });
-  countEl.textContent = (origin ? `Nearest first to ${origin.label} — ` : "") + (items.length === DATA.length
+  countEl.textContent = (origin ? `Nearest first to ${origin.label} — ` : "") + (mapViewOnly ? "In current map view — " : "") + (items.length === DATA.length
     ? `Showing all ${DATA.length.toLocaleString()} places`
     : `Showing ${items.length.toLocaleString()} of ${DATA.length.toLocaleString()} places`);
   listEl.innerHTML = items.slice(0, 200).map(f => `
@@ -152,7 +161,7 @@ function render() {
         <a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lng}" target="_blank" rel="noopener">Directions</a>
         <a href="${esc(f.sourceUrl)}" target="_blank" rel="noopener">Open-data record</a>
       </p>
-    </article>`).join("") || "<p>No places match that search. Try a different name, or clear the filter.</p>";
+    </article>`).join("") || "<p>No places in the current map view match. Try zooming out, moving the map, unchecking 'Only show places in the current map view', or clearing the search/filter.</p>";
   if (items.length > 200) {
     listEl.insertAdjacentHTML("beforeend", `<p style="color:#555">Showing the first 200 list entries — all ${items.length.toLocaleString()} matches are on the map. Narrow the search to see more in the list.</p>`);
   }
@@ -210,6 +219,8 @@ document.getElementById("useLocation").addEventListener("click", () => {
   );
 });
 document.getElementById("clearLocation").addEventListener("click", clearOrigin);
+document.getElementById("mapViewOnly").addEventListener("change", e => { mapViewOnly = e.target.checked; render(); });
+map.on("moveend", () => { if (mapViewOnly) render(); });
 render();
 </script>
 </body>
