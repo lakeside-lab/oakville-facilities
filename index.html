@@ -172,6 +172,15 @@ function reviewsHtml(f) {
   out += '<p style="color:#555; font-size:13px;">Reviews are for the whole centre/park, filtered to this activity.</p></div>';
   return out;
 }
+function reviewStarsHtml(f) {
+  const rs = reviewsFor(f);
+  if (!rs.length) return "";
+  const starred = rs.filter(r => r.stars);
+  if (!starred.length) return ' <span style="color:#555; font-size:13px; font-weight:600;" title="This place has reviews shown on click, but those quotes carry no star rating in the source.">Reviews</span>';
+  const avg = starred.reduce((s, r) => s + r.stars, 0) / starred.length;
+  const full = Math.round(avg);
+  return ' <span style="color:#b7791f; font-size:14px; white-space:nowrap;" title="Average of ' + starred.length + ' filtered review(s) shown for this place on click, not the centre overall Google rating.">' + '★'.repeat(full) + '☆'.repeat(5 - full) + ' ' + avg.toFixed(1) + '</span>';
+}
 function render() {
   const items = filtered();
   markers.forEach(m => map.removeLayer(m));
@@ -194,7 +203,7 @@ function render() {
   listEl.innerHTML = items.slice(0, 200).map(f => `
     <article class="card ${f.id === selectedId ? "selected" : ""}" data-id="${f.id}">
       <span class="tag" style="background:${COLORS[f.category] || "#333"}">${esc(f.category)}</span>
-      <h3>${esc(f.name)}</h3>
+      <h3>${esc(f.name)}${reviewStarsHtml(f)}</h3>
       <p>${origin ? `<span class="dist">${fmtKm(f._dist)} away</span> · ` : ""}${esc(f.address || "Address not published")}${f.detail ? " · " + esc(f.detail) : ""}</p>
       <p class="links">
         <a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lng}" target="_blank" rel="noopener">Directions</a>
