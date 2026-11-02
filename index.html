@@ -14,6 +14,13 @@
   header p { margin: 4px 0; color: #555; max-width: 760px; line-height: 1.45; }
   main { max-width: 1100px; margin: 0 auto; padding: 16px; }
   #search { width: 100%; padding: 12px 14px; font-size: 16px; border: 1px solid #ccc; border-radius: 10px; background: #fff; }
+  .loc { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; align-items: center; }
+  .loc input { flex: 1 1 260px; padding: 11px 14px; font-size: 15px; border: 1px solid #ccc; border-radius: 10px; background: #fff; }
+  .loc button { border: 1px solid #1a1a1a; background: #1a1a1a; color: #fff; border-radius: 999px; padding: 10px 16px; cursor: pointer; font-size: 14px; }
+  .loc button.secondary { background: #fff; color: #1a1a1a; }
+  .loc button:disabled { opacity: 0.6; }
+  #locStatus { margin: 4px 0 0; color: #555; font-size: 14px; min-height: 20px; }
+  .dist { font-weight: 600; color: #1a1a1a; }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
   .chip { border: 1px solid #ccc; background: #fff; border-radius: 999px; padding: 7px 12px; cursor: pointer; font-size: 14px; }
   .chip span { color: #666; }
@@ -35,11 +42,18 @@
 <body>
 <header>
   <h1>Oakville Facilities</h1>
-  <p>Public recreation places in Oakville, Ontario — tennis and pickleball courts, arenas and outdoor rinks, pools, sports fields, playgrounds, community centres, libraries, parks and more. Search, filter by type, or tap a pin on the map.</p>
+  <p>Public recreation places in Oakville, Ontario — tennis and pickleball courts, arenas and outdoor rinks, pools, sports fields, playgrounds, community centres, libraries, parks and more. Search, filter by type, tap a pin on the map, or find the nearest places to an address or to your current location.</p>
   <p><strong>1,034 places</strong> · Data: Town of Oakville open data, snapshot 2 November 2026 · No database, no sign-in — this page works entirely in your browser.</p>
 </header>
 <main>
   <input id="search" type="search" placeholder="Search by name or address, e.g. Sixteen Mile, Glen Abbey…" aria-label="Search facilities">
+  <div class="loc">
+    <input id="address" type="text" placeholder="Enter an address, e.g. 1415 Third Line, Oakville" aria-label="Address to find nearest places from">
+    <button id="findNearest" type="button">Find nearest</button>
+    <button id="useLocation" type="button" class="secondary">Use my current location</button>
+    <button id="clearLocation" type="button" class="secondary" hidden>Clear location</button>
+  </div>
+  <p id="locStatus">Distances are straight-line, not driving distances. Your current location stays in your browser and is not sent to a server; a typed address is sent only to the address lookup to find its coordinates.</p>
   <div class="chips" id="chips">
     <button class="chip active" data-cat="">All <span>1,034</span></button>
     <button class="chip" data-cat="Basketball">Basketball <span>15</span></button>
@@ -70,6 +84,30 @@ const DATA = [{"id":1150,"name":"Bloomfield Park Basketball Court","category":"B
 const COLORS = {"Tennis / Pickleball":"#0b7a5e","Ice Rinks & Arenas":"#0b5fa5","Pools & Splash Pads":"#0e9bb5","Community & Culture":"#7a4fa3","Basketball":"#c25e10","Sports Fields":"#4a7a1f","Playgrounds":"#b58900","Dog Parks":"#8a5a2b","Skate Parks":"#555555","Harbours & Picnic":"#1f7a8c","Parks":"#2e7d32"};
 let activeCat = "";
 let query = "";
+let origin = null; // lat, lng, label
+let originMarker = null;
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371, dLat = (lat2 - lat1) * Math.PI / 180, dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function fmtKm(km) { return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`; }
+function setOrigin(lat, lng, label) {
+  origin = { lat, lng, label };
+  if (originMarker) map.removeLayer(originMarker);
+  originMarker = L.circleMarker([lat, lng], { radius: 9, color: "#111", weight: 3, fillColor: "#fff", fillOpacity: 1 }).bindPopup(`<strong>Your location</strong><br>${esc(label)}`).addTo(map);
+  map.setView([lat, lng], 13);
+  document.getElementById("clearLocation").hidden = false;
+  document.getElementById("locStatus").textContent = `Nearest to: ${label} — distances are straight-line, not driving distances.`;
+  render();
+}
+function clearOrigin() {
+  origin = null;
+  if (originMarker) { map.removeLayer(originMarker); originMarker = null; }
+  document.getElementById("clearLocation").hidden = true;
+  document.getElementById("locStatus").textContent = "Location cleared. Distances are straight-line, not driving distances.";
+  render();
+}
 const map = L.map("map").setView([43.45, -79.68], 12);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
 let markers = [];
@@ -79,10 +117,15 @@ const countEl = document.getElementById("count");
 
 function filtered() {
   const q = query.trim().toLowerCase();
-  return DATA.filter(f =>
+  const items = DATA.filter(f =>
     (!activeCat || f.category === activeCat) &&
     (!q || f.name.toLowerCase().includes(q) || (f.address || "").toLowerCase().includes(q))
   );
+  if (origin) {
+    items.forEach(f => { f._dist = haversineKm(origin.lat, origin.lng, f.lat, f.lng); });
+    items.sort((a, b) => a._dist - b._dist);
+  }
+  return items;
 }
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function render() {
@@ -97,14 +140,14 @@ function render() {
     m.addTo(map);
     markers.push(m);
   });
-  countEl.textContent = items.length === DATA.length
+  countEl.textContent = (origin ? `Nearest first to ${origin.label} — ` : "") + (items.length === DATA.length
     ? `Showing all ${DATA.length.toLocaleString()} places`
-    : `Showing ${items.length.toLocaleString()} of ${DATA.length.toLocaleString()} places`;
+    : `Showing ${items.length.toLocaleString()} of ${DATA.length.toLocaleString()} places`);
   listEl.innerHTML = items.slice(0, 200).map(f => `
     <article class="card ${f.id === selectedId ? "selected" : ""}" data-id="${f.id}">
       <span class="tag" style="background:${COLORS[f.category] || "#333"}">${esc(f.category)}</span>
       <h3>${esc(f.name)}</h3>
-      <p>${esc(f.address || "Address not published")}${f.detail ? " · " + esc(f.detail) : ""}</p>
+      <p>${origin ? `<span class="dist">${fmtKm(f._dist)} away</span> · ` : ""}${esc(f.address || "Address not published")}${f.detail ? " · " + esc(f.detail) : ""}</p>
       <p class="links">
         <a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lng}" target="_blank" rel="noopener">Directions</a>
         <a href="${esc(f.sourceUrl)}" target="_blank" rel="noopener">Open-data record</a>
@@ -138,6 +181,35 @@ document.getElementById("chips").addEventListener("click", e => {
   activeCat = btn.dataset.cat;
   render();
 });
+document.getElementById("findNearest").addEventListener("click", async () => {
+  const input = document.getElementById("address");
+  const val = input.value.trim();
+  const status = document.getElementById("locStatus");
+  if (!val) { status.textContent = "Enter an address first, e.g. 1415 Third Line, Oakville."; input.focus(); return; }
+  const btn = document.getElementById("findNearest");
+  btn.disabled = true; status.textContent = "Looking up that address…";
+  try {
+    const q = val.toLowerCase().includes("oakville") ? val : val + ", Oakville, Ontario, Canada";
+    const res = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(q));
+    const data = await res.json();
+    if (!data.length) throw new Error("not found");
+    setOrigin(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name);
+  } catch (e) {
+    status.textContent = "Could not find that address. Try a full street address in Oakville, e.g. 1415 Third Line, Oakville.";
+  } finally { btn.disabled = false; }
+});
+document.getElementById("address").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("findNearest").click(); });
+document.getElementById("useLocation").addEventListener("click", () => {
+  const status = document.getElementById("locStatus");
+  if (!navigator.geolocation) { status.textContent = "This browser does not support current-location lookup. Type an address instead."; return; }
+  status.textContent = "Asking for your location…";
+  navigator.geolocation.getCurrentPosition(
+    pos => setOrigin(pos.coords.latitude, pos.coords.longitude, "your current location"),
+    () => { status.textContent = "Location permission was denied or unavailable. You can still type an address instead."; },
+    { enableHighAccuracy: false, timeout: 10000 }
+  );
+});
+document.getElementById("clearLocation").addEventListener("click", clearOrigin);
 render();
 </script>
 </body>
